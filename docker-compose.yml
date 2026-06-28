@@ -1,0 +1,183 @@
+# ──────────────────────────────────────────────────────────────────────────────
+#  ToggleMaster – ambiente local (9 contêineres: 5 apps + 4 infra)
+#
+#  Infra:
+#    postgres-a    → auth-service (porta 5432)
+#    postgres-b    → flag-service + targeting-service (porta 5433)
+#    redis         → evaluation-service (porta 6379)
+#    localstack    → SQS + DynamoDB locais (porta 4566)
+#
+#  Chave de API pré-criada para desenvolvimento local:
+#    Valor: tm_key_local_dev_service_key_00000000
+#    (usada pelo evaluation-service via SERVICE_API_KEY)
+#
+#  Para criar chaves adicionais via auth-service admin:
+#    curl -X POST http://localhost:8001/admin/keys \
+#         -H "Authorization: Bearer master_key_local_dev" \
+#         -H "Content-Type: application/json" \
+#         -d '{"name":"minha-chave"}'
+# ──────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── Infraestrutura ───────────────────────────────────────────────────────────
+
+  postgres-a:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: authdb
+      POSTGRES_USER: auth
+      POSTGRES_PASSWORD: auth_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-a-data:/var/lib/postgresql/data
+      - ./auth-service/db/init.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./local/init-postgres-a-seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U auth -d authdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  postgres-b:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: flagdb
+      POSTGRES_USER: flag
+      POSTGRES_PASSWORD: flag_pass
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres-b-data:/var/lib/postgresql/data
+      - ./flag-service/db/init.sql:/docker-entrypoint-initdb.d/01-flagdb-schema.sql:ro
+      - ./local/init-postgres-b.sh:/docker-entrypoint-initdb.d/02-create-targetdb.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flag -d flagdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  localstack:
+    image: localstack/localstack:3
+    ports:
+      - "4566:4566"
+    environment:
+      - SERVICES=sqs,dynamodb
+      - DEFAULT_REGION=us-east-1
+      - AWS_DEFAULT_REGION=us-east-1
+      - SQS_ENDPOINT_STRATEGY=path
+      - LOCALSTACK_HOST=localstack:4566
+    volumes:
+      - ./local/init-localstack.sh:/etc/localstack/init/ready.d/init.sh:ro
+      - localstack-data:/var/lib/localstack
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4566/_localstack/health || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 20s
+
+  # ── Microsserviços ───────────────────────────────────────────────────────────
+
+  auth-service:
+    build: ./auth-service
+    environment:
+      DATABASE_URL: postgres://auth:auth_pass@postgres-a:5432/authdb
+      MASTER_KEY: master_key_local_dev
+      PORT: "8001"
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres-a:
+        condition: service_healthy
+    restart: on-failure
+
+  flag-service:
+    build: ./flag-service
+    environment:
+      DATABASE_URL: postgres://flag:flag_pass@postgres-b:5432/flagdb
+      AUTH_SERVICE_URL: http://auth-service:8001
+      PORT: "8002"
+    ports:
+      - "8002:8002"
+    depends_on:
+      postgres-b:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+    restart: on-failure
+
+  targeting-service:
+    build: ./targeting-service
+    environment:
+      DATABASE_URL: postgres://target:target_pass@postgres-b:5432/targetdb
+      AUTH_SERVICE_URL: http://auth-service:8001
+      PORT: "8003"
+    ports:
+      - "8003:8003"
+    depends_on:
+      postgres-b:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+    restart: on-failure
+
+  evaluation-service:
+    build: ./evaluation-service
+    environment:
+      REDIS_URL: redis://redis:6379
+      FLAG_SERVICE_URL: http://flag-service:8002
+      TARGETING_SERVICE_URL: http://targeting-service:8003
+      SERVICE_API_KEY: tm_key_local_dev_service_key_00000000
+      AWS_SQS_URL: http://localstack:4566/000000000000/togglemaster-events
+      AWS_SQS_ENDPOINT: http://localstack:4566
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      PORT: "8004"
+    ports:
+      - "8004:8004"
+    depends_on:
+      redis:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+      flag-service:
+        condition: service_started
+      targeting-service:
+        condition: service_started
+    restart: on-failure
+
+  analytics-service:
+    build: ./analytics-service
+    environment:
+      AWS_REGION: us-east-1
+      AWS_SQS_URL: http://localstack:4566/000000000000/togglemaster-events
+      AWS_DYNAMODB_TABLE: ToggleMasterAnalytics
+      DYNAMODB_ENDPOINT: http://localstack:4566
+      SQS_ENDPOINT: http://localstack:4566
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      PORT: "8005"
+    ports:
+      - "8005:8005"
+    depends_on:
+      localstack:
+        condition: service_healthy
+    restart: on-failure
+
+volumes:
+  postgres-a-data:
+  postgres-b-data:
+  localstack-data:
