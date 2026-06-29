@@ -1,0 +1,17 @@
+# Copie para terraform.tfvars e ajuste se necessário.
+# NUNCA commite terraform.tfvars (contém referências sensíveis após apply).
+
+aws_region              = "us-east-1"
+project_name            = "togglemaster"
+environment             = "dev"
+vpc_cidr                = "10.0.0.0/16"
+eks_cluster_version     = "1.30"
+eks_node_instance_types = ["t3.medium"]
+eks_node_min_size       = 1
+eks_node_desired_size   = 2
+eks_node_max_size       = 4
+rds_instance_class      = "db.t3.micro"
+rds_allocated_storage   = 20
+elasticache_node_type   = "cache.t3.micro"
+sqs_queue_name          = "togglemaster-events"
+dynamodb_table_name     = "ToggleMasterAnalytics"
