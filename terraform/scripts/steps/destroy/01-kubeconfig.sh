@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-source "$(dirname "$0")/../lib/common.sh"
+source "$(dirname "$0")/../../lib/common.sh"
 
 log "Configurando kubeconfig para cluster ${CLUSTER_NAME}..."
 aws eks update-kubeconfig --name "${CLUSTER_NAME}" --region "${AWS_REGION}" >/dev/null
