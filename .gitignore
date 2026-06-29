@@ -9,17 +9,7 @@ __pycache__/
 .claude/
 postman/
 docs/
-
-# Terraform
-terraform/.terraform/
-terraform/.terraform.lock.hcl
-terraform/*.tfstate
-terraform/*.tfstate.*
-terraform/*.tfvars
-!terraform/terraform.tfvars.example
-terraform/secrets/
-terraform/crash.log
-terraform/override.tf
+terraform/
 
 # K8s gerado localmente
 k8s/generated/
